@@ -167,7 +167,7 @@ cmd_delete() {
     local name="$1"
     local force=false
 
-    if [ "$2" = "--force" ] || [ "$2" = "-f" ]; then
+    if [ "${2:-}" = "--force" ] || [ "${2:-}" = "-f" ]; then
         force=true
     fi
 
