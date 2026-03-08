@@ -211,7 +211,7 @@ PGCONF
     # Apply SSL and strict config
     step "Applying security configuration..."
     local sql_output
-    if ! sql_output=$(docker exec "$container" psql -U "$db_user" -d "$db_name" -c "
+    if ! sql_output=$(docker exec -e PGPASSWORD="$db_password" "$container" psql -U "$db_user" -d "$db_name" -c "
         ALTER SYSTEM SET ssl = 'on';
         ALTER SYSTEM SET ssl_cert_file = '/var/lib/postgresql/certs/server.crt';
         ALTER SYSTEM SET ssl_key_file = '/var/lib/postgresql/certs/server.key';
@@ -229,13 +229,22 @@ PGCONF
 
     # Restrict default user permissions
     step "Hardening permissions..."
-    if ! sql_output=$(docker exec "$container" psql -U "$db_user" -d "$db_name" -c "
+    if ! sql_output=$(docker exec -e PGPASSWORD="$db_password" "$container" psql -U "$db_user" -d "$db_name" -c "
         REVOKE CREATE ON SCHEMA public FROM PUBLIC;
         GRANT ALL ON SCHEMA public TO $db_user;
     " 2>&1); then
         warn "Could not harden permissions: $sql_output"
     else
         success "Permissions hardened"
+    fi
+
+    # Open port in firewall so the instance is reachable from anywhere by default
+    if command -v ufw &>/dev/null; then
+        ufw allow "$port"/tcp comment "pghost:$name" > /dev/null 2>&1 || true
+    fi
+    if command -v iptables &>/dev/null; then
+        iptables -I INPUT -p tcp --dport "$port" -j ACCEPT \
+            -m comment --comment "pghost:$name:open" 2>/dev/null || true
     fi
 
     # Build connection URLs

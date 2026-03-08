@@ -94,6 +94,14 @@ load_instance() {
         exit 1
     fi
     source "$PGHOST_INSTANCES/$name.env"
+    # Export so all docker exec psql calls can authenticate without -W prompt
+    export PGPASSWORD="$DB_PASSWORD"
+}
+
+pg_exec() {
+    # Wrapper: docker exec with PGPASSWORD already exported, usage same as psql args
+    local container="$1"; shift
+    docker exec -e PGPASSWORD="$PGPASSWORD" "$container" psql "$@"
 }
 
 container_name() {
