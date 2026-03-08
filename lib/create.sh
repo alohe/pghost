@@ -13,7 +13,6 @@ cmd_create() {
     local db_password=""
     local port=""
     local max_connections=100
-    local shared_buffers="128MB"
     local memory_limit="512m"
 
     # Parse arguments
@@ -104,9 +103,24 @@ hostnossl all           all             ::/0                    reject
 PGHBA
     chown 70:70 "$PGHOST_DATA/$name/pg_hba.conf"
 
+    # Auto-tune memory based on container limit
+    local mem_mb
+    mem_mb=$(echo "$memory_limit" | sed 's/[Mm]$//' | sed 's/[Gg]$/*1024/' | bc 2>/dev/null || echo 512)
+    local shared_buffers work_mem maintenance_work_mem effective_cache_size
+    # shared_buffers = 25% of RAM, work_mem = RAM / (max_connections * 2), effective_cache = 75%
+    shared_buffers="${mem_mb}MB"
+    shared_buffers=$(echo "scale=0; $mem_mb / 4" | bc)MB
+    work_mem=$(echo "scale=0; $mem_mb / ($max_connections * 2)" | bc)
+    [ "$work_mem" -lt 4 ] && work_mem=4
+    work_mem="${work_mem}MB"
+    maintenance_work_mem=$(echo "scale=0; $mem_mb / 8" | bc)
+    [ "$maintenance_work_mem" -lt 64 ] && maintenance_work_mem=64
+    maintenance_work_mem="${maintenance_work_mem}MB"
+    effective_cache_size=$(echo "scale=0; $mem_mb * 3 / 4" | bc)MB
+
     # Create custom postgresql.conf additions
     cat > "$PGHOST_DATA/$name/extra.conf" << PGCONF
-# pghost security & performance
+# pghost security & performance (auto-tuned for ${memory_limit} RAM)
 ssl = on
 ssl_cert_file = '/var/lib/postgresql/certs/server.crt'
 ssl_key_file = '/var/lib/postgresql/certs/server.key'
@@ -116,13 +130,25 @@ ssl_ciphers = 'HIGH:MEDIUM:+3DES:!aNULL'
 password_encryption = scram-sha-256
 max_connections = $max_connections
 shared_buffers = $shared_buffers
-work_mem = 4MB
-maintenance_work_mem = 64MB
-effective_cache_size = 256MB
+work_mem = $work_mem
+maintenance_work_mem = $maintenance_work_mem
+effective_cache_size = $effective_cache_size
+
+# Autovacuum (always on)
+autovacuum = on
+autovacuum_vacuum_scale_factor = 0.05
+autovacuum_analyze_scale_factor = 0.02
+autovacuum_vacuum_cost_delay = 2ms
+
+# WAL & checkpoints
+wal_buffers = 16MB
+checkpoint_completion_target = 0.9
+random_page_cost = 1.1
 
 log_connections = on
 log_disconnections = on
 log_statement = 'ddl'
+log_min_duration_statement = 1000
 log_line_prefix = '%m [%p] %u@%d '
 
 hba_file = '/var/lib/postgresql/data/pg_hba.conf'
@@ -259,5 +285,17 @@ EOF
     info "Run ${BOLD}pghost domain $name yourdomain.com${NC} to add a domain."
     info "Run ${BOLD}pghost metrics $name${NC} to see usage stats."
     info "Run ${BOLD}pghost firewall $name${NC} to restrict access."
+    echo ""
+    echo -e "  ${BOLD}Performance Tips:${NC}"
+    divider
+    dim "  Memory auto-tuned: shared_buffers=$shared_buffers, work_mem=$work_mem"
+    dim "  Autovacuum:        enabled (scale factor 5%)"
+    dim "  Slow query log:    queries >1s are logged"
+    echo ""
+    dim "  Add indexes for your most-queried columns:"
+    dim "    CREATE INDEX idx_table_col ON table(column);"
+    dim "  Use BIGSERIAL or UUID for primary keys."
+    dim "  Run pghost maintain $name weekly for VACUUM ANALYZE."
+    dim "  Run pghost bouncer $name if you have many app connections."
     echo ""
 }

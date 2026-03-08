@@ -20,6 +20,7 @@ source "$SCRIPT_DIR/lib/domain.sh"
 source "$SCRIPT_DIR/lib/metrics.sh"
 source "$SCRIPT_DIR/lib/security.sh"
 source "$SCRIPT_DIR/lib/backup.sh"
+source "$SCRIPT_DIR/lib/tune.sh"
 
 show_help() {
     echo ""
@@ -43,7 +44,12 @@ show_help() {
     echo -e "    ${CYAN}domain${NC}  <name> <domain> remove  Remove domain"
     echo ""
     echo -e "  ${BOLD}MONITORING${NC}"
-    echo -e "    ${CYAN}metrics${NC} [name]            Show usage metrics (CPU, RAM, disk, conns)"
+    echo -e "    ${CYAN}metrics${NC}   [name]           Show usage metrics (CPU, RAM, disk, conns)"
+    echo ""
+    echo -e "  ${BOLD}PERFORMANCE${NC}"
+    echo -e "    ${CYAN}tune${NC}      <name>           Re-tune memory settings for current RAM limit"
+    echo -e "    ${CYAN}maintain${NC}  <name>           VACUUM ANALYZE + bloat report + missing index hints"
+    echo -e "    ${CYAN}bouncer${NC}   <name> [action]  Deploy PgBouncer connection pooler (start/stop/status)"
     echo ""
     echo -e "  ${BOLD}SECURITY${NC}"
     echo -e "    ${CYAN}firewall${NC} <name> allow <ip>    Allow IP access"
@@ -198,7 +204,7 @@ cmd_update() {
     step "Fetching latest version..."
 
     local tmp_dir=$(mktemp -d)
-    local files="pghost lib/config.sh lib/create.sh lib/list.sh lib/domain.sh lib/metrics.sh lib/security.sh lib/backup.sh"
+    local files="pghost lib/config.sh lib/create.sh lib/list.sh lib/domain.sh lib/metrics.sh lib/security.sh lib/backup.sh lib/tune.sh"
 
     mkdir -p "$tmp_dir/lib"
     for file in $files; do
@@ -255,6 +261,9 @@ case "${1:-help}" in
     restore)    shift; cmd_restore "$@" ;;
     backups)    shift; cmd_backups "$@" ;;
     cron)       shift; cmd_cron "$@" ;;
+    tune)       shift; cmd_tune "$@" ;;
+    maintain)   shift; cmd_maintain "$@" ;;
+    bouncer)    shift; cmd_bouncer "$@" ;;
     install)    shift; cmd_install "$@" ;;
     update)     shift; cmd_update "$@" ;;
     version|-v|--version) cmd_version ;;

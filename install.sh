@@ -30,7 +30,7 @@ echo -e "  ${CYAN}→${NC}  Downloading pghost..."
 mkdir -p "$INSTALL_DIR/lib"
 
 # Download files
-for file in pghost lib/config.sh lib/create.sh lib/list.sh lib/domain.sh lib/metrics.sh lib/security.sh lib/backup.sh; do
+for file in pghost lib/config.sh lib/create.sh lib/list.sh lib/domain.sh lib/metrics.sh lib/security.sh lib/backup.sh lib/tune.sh; do
     curl -sSL "$REPO_URL/$file" -o "$INSTALL_DIR/$file"
 done
 
