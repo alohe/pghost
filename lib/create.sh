@@ -126,7 +126,8 @@ hba_file = '/var/lib/postgresql/data/pg_hba.conf'
 PGCONF
 
     step "Starting PostgreSQL container..."
-    docker run -d \
+    local docker_output
+    if ! docker_output=$(docker run -d \
         --name "$container" \
         --network "$DOCKER_NETWORK" \
         --restart unless-stopped \
@@ -139,10 +140,13 @@ PGCONF
         -p "${port}:5432" \
         -v "$PGHOST_DATA/$name/pgdata:/var/lib/postgresql/data" \
         -v "$PGHOST_CERTS/$name:/var/lib/postgresql/certs:ro" \
-        -v "$PGHOST_DATA/$name/pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf:ro" \
         "$PG_IMAGE" \
         postgres -c "config_file=/var/lib/postgresql/data/postgresql.conf" \
-        > /dev/null 2>&1
+        2>&1); then
+        error "Failed to start container:"
+        echo "  $docker_output"
+        exit 1
+    fi
 
     # Wait for custom config - on first run pg_hba.conf gets overwritten by initdb
     sleep 2
