@@ -176,7 +176,27 @@ PGCONF
         -v "$PGHOST_DATA/$name/pgdata:/var/lib/postgresql/data" \
         -v "$PGHOST_CERTS/$name:/var/lib/postgresql/certs:ro" \
         "$PG_IMAGE" \
-        postgres -c "config_file=/var/lib/postgresql/data/postgresql.conf" \
+        postgres \
+            -c ssl=on \
+            -c ssl_cert_file=/var/lib/postgresql/certs/server.crt \
+            -c ssl_key_file=/var/lib/postgresql/certs/server.key \
+            -c ssl_min_protocol_version=TLSv1.2 \
+            -c password_encryption=scram-sha-256 \
+            -c max_connections="$max_connections" \
+            -c shared_buffers="$shared_buffers" \
+            -c work_mem="$work_mem" \
+            -c maintenance_work_mem="$maintenance_work_mem" \
+            -c effective_cache_size="$effective_cache_size" \
+            -c wal_buffers=16MB \
+            -c checkpoint_completion_target=0.9 \
+            -c random_page_cost=1.1 \
+            -c autovacuum=on \
+            -c autovacuum_vacuum_scale_factor=0.05 \
+            -c autovacuum_analyze_scale_factor=0.02 \
+            -c log_connections=on \
+            -c log_disconnections=on \
+            -c log_statement=ddl \
+            -c log_min_duration_statement=1000 \
         2>&1); then
         error "Failed to start container:"
         echo "  $docker_output"
