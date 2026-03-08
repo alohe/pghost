@@ -42,8 +42,8 @@ ln -sf "$INSTALL_DIR/pghost" /usr/local/bin/pghost
 echo -e "  ${GREEN}✓${NC}  pghost installed to /usr/local/bin/pghost"
 echo ""
 
-# Run install command to set up dependencies
-pghost install
+# Run install command to set up dependencies (call directly, not via symlink)
+"$INSTALL_DIR/pghost" install
 
 echo ""
 echo -e "  ${BOLD}Quick start:${NC}"
