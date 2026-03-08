@@ -64,11 +64,11 @@ _fw_allow() {
     step "Allowing $ip access to '$name' (port $DB_PORT)..."
 
     if command -v ufw &>/dev/null; then
-        ufw allow from "$ip" to any port "$DB_PORT" proto tcp comment "pghost:$name" > /dev/null 2>&1
+        ufw allow from "$ip" to any port "$DB_PORT" proto tcp comment "pghost:$name" > /dev/null 2>&1 || true
     fi
 
     iptables -I INPUT -p tcp --dport "$DB_PORT" -s "$ip" -j ACCEPT \
-        -m comment --comment "pghost:$name:allow:$ip" 2>/dev/null
+        -m comment --comment "pghost:$name:allow:$ip" 2>/dev/null || true
 
     # Save rule to instance config
     local rules_file="$PGHOST_INSTANCES/${name}.rules"
@@ -91,11 +91,11 @@ _fw_deny() {
     step "Denying $ip access to '$name' (port $DB_PORT)..."
 
     if command -v ufw &>/dev/null; then
-        ufw deny from "$ip" to any port "$DB_PORT" proto tcp comment "pghost:$name" > /dev/null 2>&1
+        ufw deny from "$ip" to any port "$DB_PORT" proto tcp comment "pghost:$name" > /dev/null 2>&1 || true
     fi
 
     iptables -I INPUT -p tcp --dport "$DB_PORT" -s "$ip" -j DROP \
-        -m comment --comment "pghost:$name:deny:$ip" 2>/dev/null
+        -m comment --comment "pghost:$name:deny:$ip" 2>/dev/null || true
 
     # Update rules file
     local rules_file="$PGHOST_INSTANCES/${name}.rules"
@@ -154,23 +154,23 @@ _fw_lockdown() {
 
     # Drop all traffic to this port by default
     if command -v ufw &>/dev/null; then
-        ufw deny "$DB_PORT"/tcp comment "pghost:$name:lockdown" > /dev/null 2>&1
+        ufw deny "$DB_PORT"/tcp comment "pghost:$name:lockdown" > /dev/null 2>&1 || true
     fi
 
     iptables -A INPUT -p tcp --dport "$DB_PORT" -j DROP \
-        -m comment --comment "pghost:$name:lockdown" 2>/dev/null
+        -m comment --comment "pghost:$name:lockdown" 2>/dev/null || true
 
     # Re-apply allowed IPs (they take precedence as they were added with -I)
     if [ -f "$rules_file" ]; then
         grep "^allow " "$rules_file" | awk '{print $2}' | while read -r ip; do
             iptables -I INPUT -p tcp --dport "$DB_PORT" -s "$ip" -j ACCEPT \
-                -m comment --comment "pghost:$name:allow:$ip" 2>/dev/null
-        done
+                -m comment --comment "pghost:$name:allow:$ip" 2>/dev/null || true
+        done || true
     fi
 
     # Always allow localhost
     iptables -I INPUT -p tcp --dport "$DB_PORT" -s 127.0.0.1 -j ACCEPT \
-        -m comment --comment "pghost:$name:localhost" 2>/dev/null
+        -m comment --comment "pghost:$name:localhost" 2>/dev/null || true
 
     # Save iptables
     _save_iptables
@@ -188,12 +188,12 @@ _fw_open() {
     step "Removing lockdown for '$name' (port $DB_PORT)..."
 
     # Remove all rules for this instance
-    iptables -S | grep "pghost:$name" | while read -r rule; do
-        echo "$rule" | sed 's/^-A//' | xargs iptables -D 2>/dev/null
-    done
+    iptables -S 2>/dev/null | grep "pghost:$name" | while read -r rule; do
+        echo "$rule" | sed 's/^-A//' | xargs iptables -D 2>/dev/null || true
+    done || true
 
     if command -v ufw &>/dev/null; then
-        ufw delete deny "$DB_PORT"/tcp > /dev/null 2>&1
+        ufw delete deny "$DB_PORT"/tcp > /dev/null 2>&1 || true
     fi
 
     _save_iptables
@@ -214,7 +214,7 @@ _fw_status() {
     echo -e "  ${BOLD}Active iptables rules:${NC}"
     divider
 
-    local rules=$(iptables -L INPUT -n --line-numbers 2>/dev/null | grep "dpt:$DB_PORT")
+    local rules=$(iptables -L INPUT -n --line-numbers 2>/dev/null | grep "dpt:$DB_PORT" || true)
     if [ -n "$rules" ]; then
         echo "$rules" | while read -r line; do
             if echo "$line" | grep -q "ACCEPT"; then
@@ -250,9 +250,9 @@ _fw_status() {
     if command -v ufw &>/dev/null; then
         echo -e "  ${BOLD}UFW Status:${NC}"
         divider
-        ufw status 2>/dev/null | grep "$DB_PORT" | while read -r line; do
+        ufw status 2>/dev/null | { grep "$DB_PORT" || true; } | while read -r line; do
             echo -e "  $line"
-        done
+        done || true
         echo ""
     fi
 
@@ -284,9 +284,9 @@ cmd_harden() {
     # Install fail2ban
     step "Installing fail2ban..."
     if command -v apt-get &>/dev/null; then
-        apt-get install -y -qq fail2ban > /dev/null 2>&1
+        apt-get install -y -qq fail2ban > /dev/null || true
     elif command -v dnf &>/dev/null; then
-        dnf install -y -q fail2ban > /dev/null 2>&1
+        dnf install -y -q fail2ban > /dev/null || true
     fi
 
     if command -v fail2ban-client &>/dev/null; then
@@ -312,8 +312,8 @@ failregex = FATAL:  password authentication failed for user .* from <HOST>
 ignoreregex =
 F2BF
 
-        systemctl enable fail2ban > /dev/null 2>&1
-        systemctl restart fail2ban > /dev/null 2>&1
+        systemctl enable fail2ban > /dev/null 2>&1 || true
+        systemctl restart fail2ban > /dev/null 2>&1 || true
         success "fail2ban configured for PostgreSQL"
     else
         warn "Could not install fail2ban"
@@ -334,8 +334,8 @@ F2BF
     # Automatic security updates
     step "Enabling automatic security updates..."
     if command -v apt-get &>/dev/null; then
-        apt-get install -y -qq unattended-upgrades > /dev/null 2>&1
-        echo 'Unattended-Upgrade::Automatic-Reboot "false";' > /etc/apt/apt.conf.d/50unattended-upgrades-local 2>/dev/null
+        apt-get install -y -qq unattended-upgrades > /dev/null || true
+        echo 'Unattended-Upgrade::Automatic-Reboot "false";' > /etc/apt/apt.conf.d/50unattended-upgrades-local 2>/dev/null || true
         success "Automatic security updates enabled"
     fi
 
@@ -344,12 +344,12 @@ F2BF
     # Enable UFW with sane defaults
     if command -v ufw &>/dev/null; then
         step "Configuring UFW firewall..."
-        ufw default deny incoming > /dev/null 2>&1
-        ufw default allow outgoing > /dev/null 2>&1
-        ufw allow ssh > /dev/null 2>&1
-        ufw allow 80/tcp > /dev/null 2>&1
-        ufw allow 443/tcp > /dev/null 2>&1
-        ufw --force enable > /dev/null 2>&1
+        ufw default deny incoming > /dev/null 2>&1 || true
+        ufw default allow outgoing > /dev/null 2>&1 || true
+        ufw allow ssh > /dev/null 2>&1 || true
+        ufw allow 80/tcp > /dev/null 2>&1 || true
+        ufw allow 443/tcp > /dev/null 2>&1 || true
+        ufw --force enable > /dev/null 2>&1 || true
         success "UFW firewall enabled (SSH, HTTP, HTTPS allowed)"
         warn "Database ports are NOT open by default. Use: pghost firewall <name> allow <ip>"
     fi

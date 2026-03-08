@@ -30,10 +30,13 @@ cmd_backup() {
 
     step "Backing up '$name'..."
 
+    set +o pipefail
     docker exec "$container" pg_dump -U "$DB_USER" -d "$DB_NAME" --format=plain --no-owner --no-privileges 2>/dev/null \
         | gzip > "$output"
+    local backup_exit=$?
+    set -o pipefail
 
-    if [ $? -eq 0 ] && [ -s "$output" ]; then
+    if [ $backup_exit -eq 0 ] && [ -s "$output" ]; then
         local size=$(du -h "$output" | cut -f1)
         success "Backup saved: $output ($size)"
     else
@@ -104,23 +107,36 @@ cmd_restore() {
     step "Creating safety backup..."
     local safety_backup="$PGHOST_BACKUPS/$name/${name}_pre_restore_$(date +%Y%m%d_%H%M%S).sql.gz"
     mkdir -p "$PGHOST_BACKUPS/$name"
-    docker exec "$container" pg_dump -U "$DB_USER" -d "$DB_NAME" --format=plain 2>/dev/null | gzip > "$safety_backup"
+    set +o pipefail
+    docker exec "$container" pg_dump -U "$DB_USER" -d "$DB_NAME" --format=plain 2>/dev/null | gzip > "$safety_backup" || true
+    set -o pipefail
     dim "  Safety backup: $safety_backup"
 
     step "Restoring '$name' from $input..."
 
     # Drop and recreate database
-    docker exec "$container" psql -U "$DB_USER" -d postgres -c "DROP DATABASE IF EXISTS \"$DB_NAME\";" > /dev/null 2>&1
-    docker exec "$container" psql -U "$DB_USER" -d postgres -c "CREATE DATABASE \"$DB_NAME\" OWNER \"$DB_USER\";" > /dev/null 2>&1
-
-    # Restore
-    if [[ "$input" == *.gz ]]; then
-        gunzip -c "$input" | docker exec -i "$container" psql -U "$DB_USER" -d "$DB_NAME" > /dev/null 2>&1
-    else
-        docker exec -i "$container" psql -U "$DB_USER" -d "$DB_NAME" < "$input" > /dev/null 2>&1
+    if ! docker exec "$container" psql -U "$DB_USER" -d postgres -c "DROP DATABASE IF EXISTS \"$DB_NAME\";" > /dev/null 2>&1; then
+        warn "Could not drop existing database (it may have active connections)"
+    fi
+    if ! docker exec "$container" psql -U "$DB_USER" -d postgres -c "CREATE DATABASE \"$DB_NAME\" OWNER \"$DB_USER\";" > /dev/null 2>&1; then
+        error "Could not create database. Restore aborted."
+        info "Safety backup available at: $safety_backup"
+        exit 1
     fi
 
-    if [ $? -eq 0 ]; then
+    # Restore
+    local restore_exit=0
+    set +o pipefail
+    if [[ "$input" == *.gz ]]; then
+        gunzip -c "$input" | docker exec -i "$container" psql -U "$DB_USER" -d "$DB_NAME" > /dev/null 2>&1
+        restore_exit=$?
+    else
+        docker exec -i "$container" psql -U "$DB_USER" -d "$DB_NAME" < "$input" > /dev/null 2>&1
+        restore_exit=$?
+    fi
+    set -o pipefail
+
+    if [ $restore_exit -eq 0 ]; then
         success "Restore complete!"
     else
         error "Restore encountered errors. Check: docker logs $container"
@@ -207,7 +223,7 @@ cmd_cron() {
     local cron_cmd="$cron_line $(which pghost || echo /usr/local/bin/pghost) backup $name"
 
     # Add to crontab if not already there
-    (crontab -l 2>/dev/null | grep -v "pghost backup $name"; echo "$cron_cmd") | crontab -
+    ( (crontab -l 2>/dev/null || true) | { grep -v "pghost backup $name" || true; }; echo "$cron_cmd") | crontab -
 
     success "Automated $schedule backups configured for '$name'"
     dim "  Schedule: $cron_line"

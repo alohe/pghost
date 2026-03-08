@@ -92,7 +92,11 @@ cmd_stop() {
     local container=$(container_name "$name")
 
     step "Stopping '$name'..."
-    docker stop "$container" > /dev/null 2>&1
+    if ! docker stop "$container" > /dev/null 2>&1; then
+        error "Failed to stop '$name'. It may already be stopped."
+        echo ""
+        return
+    fi
     success "Instance '$name' stopped."
     echo ""
 }
@@ -111,7 +115,11 @@ cmd_start() {
     local container=$(container_name "$name")
 
     step "Starting '$name'..."
-    docker start "$container" > /dev/null 2>&1
+    if ! docker start "$container" > /dev/null 2>&1; then
+        error "Failed to start container '$container'. Check: docker logs $container"
+        echo ""
+        return
+    fi
 
     local retries=0
     while [ $retries -lt 15 ]; do
@@ -142,7 +150,11 @@ cmd_restart() {
     local container=$(container_name "$name")
 
     step "Restarting '$name'..."
-    docker restart "$container" > /dev/null 2>&1
+    if ! docker restart "$container" > /dev/null 2>&1; then
+        error "Failed to restart '$name'. Check: docker logs $container"
+        echo ""
+        return
+    fi
     sleep 2
     success "Instance '$name' restarted."
     echo ""
@@ -190,13 +202,13 @@ cmd_delete() {
     rm -rf "$PGHOST_CERTS/$name"
 
     # Remove nginx config if exists
-    if [ -f "$PGHOST_NGINX_DIR/pghost-$name.conf" ]; then
-        rm -f "$PGHOST_NGINX_DIR/pghost-$name.conf"
-        nginx -s reload 2>/dev/null || true
-    fi
+    rm -f "$PGHOST_NGINX_DIR/pghost-$name.conf" 2>/dev/null || true
+    rm -f "/etc/nginx/stream.d/pghost-$name.conf" 2>/dev/null || true
+    nginx -s reload 2>/dev/null || true
 
     step "Removing instance config..."
     rm -f "$PGHOST_INSTANCES/$name.env"
+    rm -f "$PGHOST_INSTANCES/$name.rules"
 
     echo ""
     success "Instance '$name' deleted."

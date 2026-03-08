@@ -115,13 +115,17 @@ cmd_install() {
     if ! command -v nginx &>/dev/null; then
         step "Installing nginx..."
         if command -v apt-get &>/dev/null; then
-            apt-get update -qq && apt-get install -y -qq nginx > /dev/null 2>&1
+            apt-get update -qq && apt-get install -y -qq nginx > /dev/null || warn "Failed to install nginx via apt"
         elif command -v dnf &>/dev/null; then
-            dnf install -y -q nginx > /dev/null 2>&1
+            dnf install -y -q nginx > /dev/null || warn "Failed to install nginx via dnf"
         fi
-        systemctl enable nginx > /dev/null 2>&1
-        systemctl start nginx > /dev/null 2>&1
-        success "nginx installed"
+        systemctl enable nginx > /dev/null 2>&1 || true
+        systemctl start nginx > /dev/null 2>&1 || true
+        if command -v nginx &>/dev/null; then
+            success "nginx installed"
+        else
+            warn "nginx installation failed — domain features will not work"
+        fi
     else
         success "nginx already installed"
     fi
@@ -130,11 +134,15 @@ cmd_install() {
     if ! command -v certbot &>/dev/null; then
         step "Installing certbot..."
         if command -v apt-get &>/dev/null; then
-            apt-get install -y -qq certbot python3-certbot-nginx > /dev/null 2>&1
+            apt-get install -y -qq certbot python3-certbot-nginx > /dev/null || warn "Failed to install certbot via apt"
         elif command -v dnf &>/dev/null; then
-            dnf install -y -q certbot python3-certbot-nginx > /dev/null 2>&1
+            dnf install -y -q certbot python3-certbot-nginx > /dev/null || warn "Failed to install certbot via dnf"
         fi
-        success "certbot installed"
+        if command -v certbot &>/dev/null; then
+            success "certbot installed"
+        else
+            warn "certbot installation failed — SSL features will not work"
+        fi
     else
         success "certbot already installed"
     fi
@@ -142,9 +150,9 @@ cmd_install() {
     # Install useful tools
     step "Installing tools (bc, openssl, curl)..."
     if command -v apt-get &>/dev/null; then
-        apt-get install -y -qq bc openssl curl > /dev/null 2>&1
+        apt-get install -y -qq bc openssl curl > /dev/null || warn "Some tools failed to install"
     elif command -v dnf &>/dev/null; then
-        dnf install -y -q bc openssl curl > /dev/null 2>&1
+        dnf install -y -q bc openssl curl > /dev/null || warn "Some tools failed to install"
     fi
     success "Tools installed"
 

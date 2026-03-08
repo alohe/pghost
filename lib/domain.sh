@@ -118,24 +118,33 @@ cmd_domain() {
     if ! command -v nginx &>/dev/null; then
         step "Installing nginx..."
         if command -v apt-get &>/dev/null; then
-            apt-get update -qq && apt-get install -y -qq nginx certbot python3-certbot-nginx > /dev/null 2>&1
+            apt-get update -qq && apt-get install -y -qq nginx certbot python3-certbot-nginx > /dev/null || true
         elif command -v dnf &>/dev/null; then
-            dnf install -y -q nginx certbot python3-certbot-nginx > /dev/null 2>&1
+            dnf install -y -q nginx certbot python3-certbot-nginx > /dev/null || true
         fi
-        systemctl enable nginx > /dev/null 2>&1
-        systemctl start nginx > /dev/null 2>&1
-        success "nginx installed"
+        systemctl enable nginx > /dev/null 2>&1 || true
+        systemctl start nginx > /dev/null 2>&1 || true
+        if command -v nginx &>/dev/null; then
+            success "nginx installed"
+        else
+            error "Failed to install nginx. Domain setup cannot continue."
+            exit 1
+        fi
     fi
 
     # Install certbot if not present
     if ! command -v certbot &>/dev/null; then
         step "Installing certbot..."
         if command -v apt-get &>/dev/null; then
-            apt-get install -y -qq certbot python3-certbot-nginx > /dev/null 2>&1
+            apt-get install -y -qq certbot python3-certbot-nginx > /dev/null || true
         elif command -v dnf &>/dev/null; then
-            dnf install -y -q certbot python3-certbot-nginx > /dev/null 2>&1
+            dnf install -y -q certbot python3-certbot-nginx > /dev/null || true
         fi
-        success "certbot installed"
+        if ! command -v certbot &>/dev/null; then
+            warn "certbot not installed — will use self-signed certificates"
+        else
+            success "certbot installed"
+        fi
     fi
 
     # Create nginx stream config for PostgreSQL SSL passthrough
@@ -191,12 +200,16 @@ server {
 }
 NGINXHTTP
 
-    nginx -t > /dev/null 2>&1 && nginx -s reload > /dev/null 2>&1
+    if ! nginx -t > /dev/null 2>&1; then
+        warn "nginx configuration test failed"
+    else
+        nginx -s reload > /dev/null 2>&1 || true
+    fi
     success "nginx configured"
 
     # Get SSL certificate
     step "Obtaining SSL certificate from Let's Encrypt..."
-    if certbot certonly --nginx -d "$domain" --non-interactive --agree-tos --register-unsafely-without-email --quiet 2>/dev/null; then
+    if command -v certbot &>/dev/null && certbot certonly --nginx -d "$domain" --non-interactive --agree-tos --register-unsafely-without-email --quiet 2>/dev/null; then
         success "SSL certificate obtained"
 
         # Copy Let's Encrypt certs for PostgreSQL too
@@ -206,10 +219,12 @@ NGINXHTTP
         chown 70:70 "$PGHOST_CERTS/$name/server.key" "$PGHOST_CERTS/$name/server.crt"
 
         # Restart PostgreSQL to use new certs
-        docker restart "$(container_name "$name")" > /dev/null 2>&1
+        docker restart "$(container_name "$name")" > /dev/null 2>&1 || warn "Could not restart container"
 
         # Reload nginx with stream SSL config
-        nginx -t > /dev/null 2>&1 && nginx -s reload > /dev/null 2>&1
+        if nginx -t > /dev/null 2>&1; then
+            nginx -s reload > /dev/null 2>&1 || true
+        fi
 
         # Set up auto-renewal hook
         cat > "/etc/letsencrypt/renewal-hooks/deploy/pghost-$name.sh" << HOOK
@@ -275,9 +290,11 @@ _domain_remove() {
 
     step "Removing domain '$domain' from instance '$name'..."
 
-    rm -f "$PGHOST_NGINX_DIR/pghost-$name.conf"
-    rm -f "/etc/nginx/stream.d/pghost-$name.conf"
-    nginx -t > /dev/null 2>&1 && nginx -s reload > /dev/null 2>&1
+    rm -f "$PGHOST_NGINX_DIR/pghost-$name.conf" 2>/dev/null || true
+    rm -f "/etc/nginx/stream.d/pghost-$name.conf" 2>/dev/null || true
+    if nginx -t > /dev/null 2>&1; then
+        nginx -s reload > /dev/null 2>&1 || true
+    fi
 
     rm -f "/etc/letsencrypt/renewal-hooks/deploy/pghost-$name.sh"
 

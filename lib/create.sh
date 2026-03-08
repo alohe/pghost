@@ -76,11 +76,14 @@ cmd_create() {
     # Generate SSL certificates for this instance
     step "Generating SSL certificates..."
     mkdir -p "$PGHOST_CERTS/$name"
-    openssl req -new -x509 -days 3650 -nodes \
+    if ! openssl req -new -x509 -days 3650 -nodes \
         -subj "/CN=pghost-$name" \
         -keyout "$PGHOST_CERTS/$name/server.key" \
         -out "$PGHOST_CERTS/$name/server.crt" \
-        2>/dev/null
+        2>/dev/null; then
+        error "Failed to generate SSL certificates. Is openssl installed?"
+        exit 1
+    fi
     chmod 600 "$PGHOST_CERTS/$name/server.key"
     chmod 644 "$PGHOST_CERTS/$name/server.crt"
     # PostgreSQL requires key owned by uid 70 (postgres in alpine)
@@ -175,22 +178,33 @@ PGCONF
 
     # Apply SSL and strict config
     step "Applying security configuration..."
-    docker exec "$container" psql -U "$db_user" -d "$db_name" -c "ALTER SYSTEM SET ssl = 'on';" > /dev/null 2>&1
-    docker exec "$container" psql -U "$db_user" -d "$db_name" -c "ALTER SYSTEM SET ssl_cert_file = '/var/lib/postgresql/certs/server.crt';" > /dev/null 2>&1
-    docker exec "$container" psql -U "$db_user" -d "$db_name" -c "ALTER SYSTEM SET ssl_key_file = '/var/lib/postgresql/certs/server.key';" > /dev/null 2>&1
-    docker exec "$container" psql -U "$db_user" -d "$db_name" -c "ALTER SYSTEM SET ssl_min_protocol_version = 'TLSv1.2';" > /dev/null 2>&1
-    docker exec "$container" psql -U "$db_user" -d "$db_name" -c "ALTER SYSTEM SET password_encryption = 'scram-sha-256';" > /dev/null 2>&1
-    docker exec "$container" psql -U "$db_user" -d "$db_name" -c "ALTER SYSTEM SET log_connections = 'on';" > /dev/null 2>&1
-    docker exec "$container" psql -U "$db_user" -d "$db_name" -c "ALTER SYSTEM SET log_disconnections = 'on';" > /dev/null 2>&1
-    docker exec "$container" psql -U "$db_user" -d "$db_name" -c "ALTER SYSTEM SET max_connections = '$max_connections';" > /dev/null 2>&1
-    docker exec "$container" psql -U "$db_user" -d "$db_name" -c "SELECT pg_reload_conf();" > /dev/null 2>&1
-    success "Security configuration applied"
+    local sql_output
+    if ! sql_output=$(docker exec "$container" psql -U "$db_user" -d "$db_name" -c "
+        ALTER SYSTEM SET ssl = 'on';
+        ALTER SYSTEM SET ssl_cert_file = '/var/lib/postgresql/certs/server.crt';
+        ALTER SYSTEM SET ssl_key_file = '/var/lib/postgresql/certs/server.key';
+        ALTER SYSTEM SET ssl_min_protocol_version = 'TLSv1.2';
+        ALTER SYSTEM SET password_encryption = 'scram-sha-256';
+        ALTER SYSTEM SET log_connections = 'on';
+        ALTER SYSTEM SET log_disconnections = 'on';
+        ALTER SYSTEM SET max_connections = '$max_connections';
+        SELECT pg_reload_conf();
+    " 2>&1); then
+        warn "Some security settings could not be applied: $sql_output"
+    else
+        success "Security configuration applied"
+    fi
 
     # Restrict default user permissions
     step "Hardening permissions..."
-    docker exec "$container" psql -U "$db_user" -d "$db_name" -c "REVOKE CREATE ON SCHEMA public FROM PUBLIC;" > /dev/null 2>&1
-    docker exec "$container" psql -U "$db_user" -d "$db_name" -c "GRANT ALL ON SCHEMA public TO $db_user;" > /dev/null 2>&1
-    success "Permissions hardened"
+    if ! sql_output=$(docker exec "$container" psql -U "$db_user" -d "$db_name" -c "
+        REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+        GRANT ALL ON SCHEMA public TO $db_user;
+    " 2>&1); then
+        warn "Could not harden permissions: $sql_output"
+    else
+        success "Permissions hardened"
+    fi
 
     # Build connection URLs
     local url_ssl="postgresql://${db_user}:${db_password}@${server_ip}:${port}/${db_name}?sslmode=require"

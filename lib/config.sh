@@ -73,7 +73,10 @@ ensure_dirs() {
 
 ensure_network() {
     if ! docker network inspect "$DOCKER_NETWORK" &>/dev/null; then
-        docker network create "$DOCKER_NETWORK" --driver bridge > /dev/null 2>&1
+        if ! docker network create "$DOCKER_NETWORK" --driver bridge > /dev/null 2>&1; then
+            error "Failed to create Docker network '$DOCKER_NETWORK'"
+            exit 1
+        fi
     fi
 }
 
@@ -100,13 +103,17 @@ container_name() {
 next_available_port() {
     local port=5432
     while true; do
-        if ! docker ps --format '{{.Ports}}' | grep -q ":${port}->" 2>/dev/null; then
+        if ! docker ps --format '{{.Ports}}' 2>/dev/null | grep -q ":${port}->" 2>/dev/null; then
             if ! ss -tlnp 2>/dev/null | grep -q ":${port} " 2>/dev/null; then
                 echo "$port"
                 return
             fi
         fi
         port=$((port + 1))
+        if [ "$port" -gt 5500 ]; then
+            error "No available ports in range 5432-5500"
+            exit 1
+        fi
     done
 }
 
