@@ -154,6 +154,12 @@ log_line_prefix = '%m [%p] %u@%d '
 hba_file = '/var/lib/postgresql/data/pg_hba.conf'
 PGCONF
 
+    # Remove any stale container from a previous failed attempt
+    if docker ps -a --format '{{.Names}}' | grep -q "^${container}$" 2>/dev/null; then
+        step "Removing stale container from previous attempt..."
+        docker rm -f "$container" > /dev/null 2>&1 || true
+    fi
+
     step "Starting PostgreSQL container..."
     local docker_output
     if ! docker_output=$(docker run -d \
