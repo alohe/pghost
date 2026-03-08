@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+# pghost - self-hosted PostgreSQL instance manager
+# https://github.com/alohe/pghost
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load shared config and helpers
+source "$SCRIPT_DIR/lib/config.sh"
+source "$SCRIPT_DIR/lib/create.sh"
+source "$SCRIPT_DIR/lib/list.sh"
+source "$SCRIPT_DIR/lib/domain.sh"
+source "$SCRIPT_DIR/lib/metrics.sh"
+source "$SCRIPT_DIR/lib/security.sh"
+source "$SCRIPT_DIR/lib/backup.sh"
+
+show_help() {
+    echo ""
+    echo -e "  ${BOLD}pghost${NC} v${PGHOST_VERSION} — self-hosted PostgreSQL manager"
+    echo ""
+    echo -e "  ${BOLD}USAGE${NC}"
+    echo -e "    pghost <command> [options]"
+    echo ""
+    echo -e "  ${BOLD}INSTANCES${NC}"
+    echo -e "    ${CYAN}create${NC}  <name> [opts]     Create a new PostgreSQL instance"
+    echo -e "    ${CYAN}delete${NC}  <name> [--force]  Delete an instance and its data"
+    echo -e "    ${CYAN}list${NC}                      List all instances with status"
+    echo -e "    ${CYAN}start${NC}   <name>            Start a stopped instance"
+    echo -e "    ${CYAN}stop${NC}    <name>            Stop a running instance"
+    echo -e "    ${CYAN}restart${NC} <name>            Restart an instance"
+    echo -e "    ${CYAN}url${NC}     <name>            Show the DATABASE_URL"
+    echo -e "    ${CYAN}logs${NC}    <name> [lines]    View instance logs"
+    echo ""
+    echo -e "  ${BOLD}DOMAINS${NC}"
+    echo -e "    ${CYAN}domain${NC}  <name> <domain>   Configure domain + SSL (shows DNS records)"
+    echo -e "    ${CYAN}domain${NC}  <name> <domain> remove  Remove domain"
+    echo ""
+    echo -e "  ${BOLD}MONITORING${NC}"
+    echo -e "    ${CYAN}metrics${NC} [name]            Show usage metrics (CPU, RAM, disk, conns)"
+    echo ""
+    echo -e "  ${BOLD}SECURITY${NC}"
+    echo -e "    ${CYAN}firewall${NC} <name> allow <ip>    Allow IP access"
+    echo -e "    ${CYAN}firewall${NC} <name> deny <ip>     Block IP access"
+    echo -e "    ${CYAN}firewall${NC} <name> lockdown      Block all except allowed IPs"
+    echo -e "    ${CYAN}firewall${NC} <name> status        Show firewall rules"
+    echo -e "    ${CYAN}harden${NC}                        Full system security hardening"
+    echo ""
+    echo -e "  ${BOLD}BACKUPS${NC}"
+    echo -e "    ${CYAN}backup${NC}   <name> [file]    Create a backup"
+    echo -e "    ${CYAN}restore${NC}  <name> <file>    Restore from backup"
+    echo -e "    ${CYAN}backups${NC}  [name]           List available backups"
+    echo -e "    ${CYAN}cron${NC}     <name> [schedule] Set up automated backups (daily/hourly/weekly)"
+    echo ""
+    echo -e "  ${BOLD}SETUP${NC}"
+    echo -e "    ${CYAN}install${NC}                   Install Docker and dependencies"
+    echo -e "    ${CYAN}version${NC}                   Show version"
+    echo ""
+    echo -e "  ${BOLD}CREATE OPTIONS${NC}"
+    echo -e "    --name, -n       Instance name"
+    echo -e "    --database, -d   Database name (default: <name>_db)"
+    echo -e "    --user, -u       Database user (default: <name>_user)"
+    echo -e "    --password, -p   Password (default: auto-generated)"
+    echo -e "    --port           Port (default: auto-assigned)"
+    echo -e "    --max-conn       Max connections (default: 100)"
+    echo -e "    --memory         Container memory limit (default: 512m)"
+    echo ""
+    echo -e "  ${BOLD}EXAMPLES${NC}"
+    echo ""
+    echo -e "    ${DIM}# Create a new instance${NC}"
+    echo -e "    pghost create myapp"
+    echo ""
+    echo -e "    ${DIM}# Create with custom settings${NC}"
+    echo -e "    pghost create myapp --memory 1g --max-conn 200"
+    echo ""
+    echo -e "    ${DIM}# Add a domain with SSL${NC}"
+    echo -e "    pghost domain myapp db.myapp.com"
+    echo ""
+    echo -e "    ${DIM}# Lock down access to specific IP${NC}"
+    echo -e "    pghost firewall myapp allow 1.2.3.4"
+    echo -e "    pghost firewall myapp lockdown"
+    echo ""
+    echo -e "    ${DIM}# Set up daily backups${NC}"
+    echo -e "    pghost cron myapp daily"
+    echo ""
+    echo -e "    ${DIM}# View metrics${NC}"
+    echo -e "    pghost metrics myapp"
+    echo ""
+}
+
+cmd_install() {
+    require_root
+
+    header "Installing pghost dependencies"
+
+    # Install Docker
+    if ! command -v docker &>/dev/null; then
+        step "Installing Docker..."
+        curl -fsSL https://get.docker.com | sh
+        systemctl start docker
+        systemctl enable docker
+        success "Docker installed"
+    else
+        success "Docker already installed"
+    fi
+
+    # Install nginx
+    if ! command -v nginx &>/dev/null; then
+        step "Installing nginx..."
+        if command -v apt-get &>/dev/null; then
+            apt-get update -qq && apt-get install -y -qq nginx > /dev/null 2>&1
+        elif command -v dnf &>/dev/null; then
+            dnf install -y -q nginx > /dev/null 2>&1
+        fi
+        systemctl enable nginx > /dev/null 2>&1
+        systemctl start nginx > /dev/null 2>&1
+        success "nginx installed"
+    else
+        success "nginx already installed"
+    fi
+
+    # Install certbot
+    if ! command -v certbot &>/dev/null; then
+        step "Installing certbot..."
+        if command -v apt-get &>/dev/null; then
+            apt-get install -y -qq certbot python3-certbot-nginx > /dev/null 2>&1
+        elif command -v dnf &>/dev/null; then
+            dnf install -y -q certbot python3-certbot-nginx > /dev/null 2>&1
+        fi
+        success "certbot installed"
+    else
+        success "certbot already installed"
+    fi
+
+    # Install useful tools
+    step "Installing tools (bc, openssl, curl)..."
+    if command -v apt-get &>/dev/null; then
+        apt-get install -y -qq bc openssl curl > /dev/null 2>&1
+    elif command -v dnf &>/dev/null; then
+        dnf install -y -q bc openssl curl > /dev/null 2>&1
+    fi
+    success "Tools installed"
+
+    # Create directories
+    ensure_dirs
+    success "Data directories created"
+
+    # Create Docker network
+    ensure_network
+    success "Docker network created"
+
+    # Install pghost to /usr/local/bin
+    local install_path="/usr/local/bin/pghost"
+    if [ "$(readlink -f "$install_path" 2>/dev/null)" != "$(readlink -f "$0")" ]; then
+        step "Installing pghost CLI to $install_path..."
+        # Copy entire pghost directory to /opt/pghost/cli
+        mkdir -p /opt/pghost/cli
+        cp -r "$SCRIPT_DIR"/* /opt/pghost/cli/
+        chmod +x /opt/pghost/cli/pghost
+        ln -sf /opt/pghost/cli/pghost "$install_path"
+        success "pghost installed to $install_path"
+    fi
+
+    echo ""
+    success "${BOLD}Installation complete!${NC}"
+    echo ""
+    info "Create your first instance:"
+    dim "  pghost create myapp"
+    echo ""
+    info "Then harden your server:"
+    dim "  pghost harden"
+    echo ""
+}
+
+cmd_version() {
+    echo -e "  pghost v${PGHOST_VERSION}"
+}
+
+# Route commands
+case "${1:-help}" in
+    create)     shift; cmd_create "$@" ;;
+    delete|rm)  shift; cmd_delete "$@" ;;
+    list|ls)    shift; cmd_list "$@" ;;
+    start)      shift; cmd_start "$@" ;;
+    stop)       shift; cmd_stop "$@" ;;
+    restart)    shift; cmd_restart "$@" ;;
+    url)        shift; cmd_url "$@" ;;
+    logs)       shift; cmd_logs "$@" ;;
+    domain)     shift; cmd_domain "$@" ;;
+    metrics)    shift; cmd_metrics "$@" ;;
+    firewall)   shift; cmd_firewall "$@" ;;
+    harden)     shift; cmd_harden "$@" ;;
+    backup)     shift; cmd_backup "$@" ;;
+    restore)    shift; cmd_restore "$@" ;;
+    backups)    shift; cmd_backups "$@" ;;
+    cron)       shift; cmd_cron "$@" ;;
+    install)    shift; cmd_install "$@" ;;
+    version|-v|--version) cmd_version ;;
+    help|-h|--help) show_help ;;
+    *)
+        error "Unknown command: $1"
+        echo ""
+        info "Run ${BOLD}pghost help${NC} for usage."
+        echo ""
+        exit 1
+        ;;
+esac
