@@ -60,6 +60,7 @@ show_help() {
     echo ""
     echo -e "  ${BOLD}SETUP${NC}"
     echo -e "    ${CYAN}install${NC}                   Install Docker and dependencies"
+    echo -e "    ${CYAN}update${NC}                    Update pghost to latest version"
     echo -e "    ${CYAN}version${NC}                   Show version"
     echo ""
     echo -e "  ${BOLD}CREATE OPTIONS${NC}"
@@ -178,6 +179,52 @@ cmd_install() {
     echo ""
 }
 
+cmd_update() {
+    require_root
+
+    local repo_url="https://raw.githubusercontent.com/alohe/pghost/main"
+    local install_dir="/opt/pghost/cli"
+
+    header "Updating pghost"
+
+    step "Fetching latest version..."
+
+    local tmp_dir=$(mktemp -d)
+    local files="pghost lib/config.sh lib/create.sh lib/list.sh lib/domain.sh lib/metrics.sh lib/security.sh lib/backup.sh"
+
+    mkdir -p "$tmp_dir/lib"
+    for file in $files; do
+        if ! curl -sSL --fail "$repo_url/$file" -o "$tmp_dir/$file" 2>/dev/null; then
+            error "Failed to download $file"
+            rm -rf "$tmp_dir"
+            exit 1
+        fi
+    done
+
+    local remote_version=$(grep '^PGHOST_VERSION=' "$tmp_dir/lib/config.sh" | cut -d'"' -f2)
+
+    if [ "$remote_version" = "$PGHOST_VERSION" ]; then
+        success "Already on latest version (v${PGHOST_VERSION})"
+        rm -rf "$tmp_dir"
+        echo ""
+        return
+    fi
+
+    step "Updating v${PGHOST_VERSION} → v${remote_version}..."
+
+    mkdir -p "$install_dir/lib"
+    cp -r "$tmp_dir"/* "$install_dir/"
+    chmod +x "$install_dir/pghost"
+    ln -sf "$install_dir/pghost" /usr/local/bin/pghost
+
+    rm -rf "$tmp_dir"
+
+    success "Updated to v${remote_version}"
+    echo ""
+    info "Your instances and data are untouched."
+    echo ""
+}
+
 cmd_version() {
     echo -e "  pghost v${PGHOST_VERSION}"
 }
@@ -201,6 +248,7 @@ case "${1:-help}" in
     backups)    shift; cmd_backups "$@" ;;
     cron)       shift; cmd_cron "$@" ;;
     install)    shift; cmd_install "$@" ;;
+    update)     shift; cmd_update "$@" ;;
     version|-v|--version) cmd_version ;;
     help|-h|--help) show_help ;;
     *)
