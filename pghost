@@ -162,6 +162,18 @@ cmd_install() {
     fi
     success "Tools installed"
 
+    # Install gum for interactive menus
+    if ! command -v gum &>/dev/null; then
+        step "Installing gum (interactive CLI)..."
+        if ensure_gum; then
+            success "gum installed"
+        else
+            warn "gum not installed — interactive menus unavailable, CLI still works"
+        fi
+    else
+        success "gum already installed"
+    fi
+
     # Create directories
     ensure_dirs
     success "Data directories created"
@@ -239,12 +251,253 @@ cmd_update() {
     echo ""
 }
 
+cmd_interactive() {
+    require_root
+
+    if ! has_gum; then
+        step "Installing gum for interactive menus..."
+        if ! ensure_gum; then
+            show_help
+            return
+        fi
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}${CYAN}pghost${NC} v${PGHOST_VERSION}"
+    echo ""
+
+    local choice
+    choice=$(gum choose --header "  What would you like to do?" \
+        "Create a new instance" \
+        "Manage instances" \
+        "Domains" \
+        "Performance" \
+        "Security" \
+        "Backups" \
+        "Setup" \
+        "Help" \
+        "Exit") || return
+
+    case "$choice" in
+        "Create a new instance") _menu_create ;;
+        "Manage instances")      _menu_manage ;;
+        "Domains")               _menu_domains ;;
+        "Performance")           _menu_performance ;;
+        "Security")              _menu_security ;;
+        "Backups")               _menu_backups ;;
+        "Setup")                 _menu_setup ;;
+        "Help")                  show_help ;;
+        "Exit")                  return ;;
+    esac
+}
+
+_menu_create() {
+    local name mem max_conn
+
+    name=$(gum input --placeholder "myapp" --header "Instance name:") || return
+    if [ -z "$name" ]; then
+        warn "No name provided."
+        return
+    fi
+
+    mem=$(gum choose --header "Memory limit:" \
+        "256m" "512m" "1g" "2g" "4g") || return
+
+    max_conn=$(gum choose --header "Max connections:" \
+        "100" "200" "500") || return
+
+    echo ""
+    gum confirm "Create instance '$name' with ${mem} RAM and ${max_conn} connections?" || return
+
+    cmd_create "$name" --memory "$mem" --max-conn "$max_conn"
+}
+
+_menu_manage() {
+    local name action
+
+    name=$(pick_instance "Select an instance to manage:") || return
+
+    action=$(gum choose --header "Instance: $name" \
+        "Show URL" \
+        "View Logs" \
+        "Metrics" \
+        "Start" \
+        "Stop" \
+        "Restart" \
+        "Delete" \
+        "Back") || return
+
+    case "$action" in
+        "Show URL")   cmd_url "$name" ;;
+        "View Logs")  cmd_logs "$name" ;;
+        "Metrics")    cmd_metrics "$name" ;;
+        "Start")      cmd_start "$name" ;;
+        "Stop")       cmd_stop "$name" ;;
+        "Restart")    cmd_restart "$name" ;;
+        "Delete")
+            gum confirm "Delete instance '$name' and all its data?" && cmd_delete "$name" --force
+            ;;
+        "Back") cmd_interactive ;;
+    esac
+}
+
+_menu_domains() {
+    local name action domain
+
+    name=$(pick_instance "Select an instance:") || return
+
+    action=$(gum choose --header "Domain: $name" \
+        "Add domain" \
+        "Remove domain" \
+        "Back") || return
+
+    case "$action" in
+        "Add domain")
+            domain=$(gum input --placeholder "db.myapp.com" --header "Domain name:") || return
+            [ -z "$domain" ] && return
+            cmd_domain "$name" "$domain"
+            ;;
+        "Remove domain")
+            domain=$(gum input --placeholder "db.myapp.com" --header "Domain to remove:") || return
+            [ -z "$domain" ] && return
+            cmd_domain "$name" "$domain" remove
+            ;;
+        "Back") cmd_interactive ;;
+    esac
+}
+
+_menu_performance() {
+    local name action
+
+    name=$(pick_instance "Select an instance:") || return
+
+    action=$(gum choose --header "Performance: $name" \
+        "Tune memory settings" \
+        "Run maintenance (VACUUM ANALYZE)" \
+        "Deploy PgBouncer" \
+        "Stop PgBouncer" \
+        "PgBouncer status" \
+        "Back") || return
+
+    case "$action" in
+        "Tune memory settings")              cmd_tune "$name" ;;
+        "Run maintenance (VACUUM ANALYZE)")  cmd_maintain "$name" ;;
+        "Deploy PgBouncer")                  cmd_bouncer "$name" start ;;
+        "Stop PgBouncer")                    cmd_bouncer "$name" stop ;;
+        "PgBouncer status")                  cmd_bouncer "$name" status ;;
+        "Back") cmd_interactive ;;
+    esac
+}
+
+_menu_security() {
+    local action
+
+    action=$(gum choose --header "Security" \
+        "Firewall status" \
+        "Allow IP" \
+        "Deny IP" \
+        "Lockdown" \
+        "Open (remove lockdown)" \
+        "System harden" \
+        "Back") || return
+
+    case "$action" in
+        "System harden")
+            gum confirm "Run full system security hardening?" && cmd_harden
+            ;;
+        "Back") cmd_interactive ;;
+        *)
+            local name ip
+            name=$(pick_instance "Select an instance:") || return
+
+            case "$action" in
+                "Firewall status") cmd_firewall "$name" status ;;
+                "Allow IP")
+                    ip=$(gum input --placeholder "1.2.3.4" --header "IP address to allow:") || return
+                    [ -z "$ip" ] && return
+                    cmd_firewall "$name" allow "$ip"
+                    ;;
+                "Deny IP")
+                    ip=$(gum input --placeholder "1.2.3.4" --header "IP address to deny:") || return
+                    [ -z "$ip" ] && return
+                    cmd_firewall "$name" deny "$ip"
+                    ;;
+                "Lockdown")
+                    cmd_firewall "$name" lockdown
+                    ;;
+                "Open (remove lockdown)")
+                    cmd_firewall "$name" open
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_menu_backups() {
+    local action
+
+    action=$(gum choose --header "Backups" \
+        "Create backup" \
+        "Restore from backup" \
+        "List backups" \
+        "Schedule automatic backups" \
+        "Back") || return
+
+    case "$action" in
+        "Create backup")
+            local name
+            name=$(pick_instance "Backup which instance?") || return
+            cmd_backup "$name"
+            ;;
+        "Restore from backup")
+            local name file
+            name=$(pick_instance "Restore which instance?") || return
+            file=$(gum file "$PGHOST_BACKUPS/$name" 2>/dev/null) || {
+                file=$(gum input --placeholder "/path/to/backup.sql.gz" --header "Backup file path:") || return
+            }
+            [ -z "$file" ] && return
+            cmd_restore "$name" "$file"
+            ;;
+        "List backups")
+            local name
+            name=$(pick_instance "List backups for:") || { cmd_backups; return; }
+            cmd_backups "$name"
+            ;;
+        "Schedule automatic backups")
+            local name schedule
+            name=$(pick_instance "Schedule backups for:") || return
+            schedule=$(gum choose --header "Backup schedule:" \
+                "daily" "hourly" "weekly") || return
+            cmd_cron "$name" "$schedule"
+            ;;
+        "Back") cmd_interactive ;;
+    esac
+}
+
+_menu_setup() {
+    local action
+
+    action=$(gum choose --header "Setup" \
+        "Install dependencies" \
+        "Update pghost" \
+        "Show version" \
+        "Back") || return
+
+    case "$action" in
+        "Install dependencies") cmd_install ;;
+        "Update pghost")        cmd_update ;;
+        "Show version")         cmd_version ;;
+        "Back") cmd_interactive ;;
+    esac
+}
+
 cmd_version() {
     echo -e "  pghost v${PGHOST_VERSION}"
 }
 
-# Route commands
-case "${1:-help}" in
+# Route commands — no args launches interactive menu
+case "${1:-}" in
+    "") cmd_interactive ;;
     create)     shift; cmd_create "$@" ;;
     delete|rm)  shift; cmd_delete "$@" ;;
     list|ls)    shift; cmd_list "$@" ;;

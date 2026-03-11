@@ -125,6 +125,53 @@ next_available_port() {
     done
 }
 
+ensure_gum() {
+    if command -v gum &>/dev/null; then
+        return 0
+    fi
+
+    if [ "$EUID" -ne 0 ]; then
+        return 1
+    fi
+
+    if command -v apt-get &>/dev/null; then
+        mkdir -p /etc/apt/keyrings
+        curl -fsSL https://repo.charm.sh/apt/gpg.key | gpg --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null || true
+        echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" > /etc/apt/sources.list.d/charm.list 2>/dev/null || true
+        apt-get update -qq > /dev/null 2>&1 || true
+        apt-get install -y -qq gum > /dev/null 2>&1 || true
+    elif command -v dnf &>/dev/null; then
+        echo '[charm]
+name=Charm
+baseurl=https://repo.charm.sh/yum/
+enabled=1
+gpgcheck=1
+gpgkey=https://repo.charm.sh/yum/gpg.key' > /etc/yum.repos.d/charm.repo 2>/dev/null || true
+        dnf install -y -q gum > /dev/null 2>&1 || true
+    fi
+
+    command -v gum &>/dev/null
+}
+
+has_gum() {
+    command -v gum &>/dev/null
+}
+
+pick_instance() {
+    local header_text="${1:-Select an instance:}"
+    local instances
+    instances=$(ls "$PGHOST_INSTANCES"/*.env 2>/dev/null | xargs -I{} basename {} .env)
+
+    if [ -z "$instances" ]; then
+        error "No instances found."
+        info "Create one with: ${BOLD}pghost create mydb${NC}"
+        echo ""
+        return 1
+    fi
+
+    echo "$instances" | gum choose --header "$header_text"
+}
+
 format_bytes() {
     local bytes=$1
     if [ "$bytes" -ge 1073741824 ]; then
