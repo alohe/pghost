@@ -219,8 +219,9 @@ cmd_update() {
     local files="pghost lib/config.sh lib/create.sh lib/list.sh lib/domain.sh lib/metrics.sh lib/security.sh lib/backup.sh lib/tune.sh"
 
     mkdir -p "$tmp_dir/lib"
+    local cache_bust="?t=$(date +%s)"
     for file in $files; do
-        if ! curl -sSL --fail "$repo_url/$file" -o "$tmp_dir/$file" 2>/dev/null; then
+        if ! curl -sSL --fail -H "Cache-Control: no-cache" "$repo_url/$file$cache_bust" -o "$tmp_dir/$file" 2>/dev/null; then
             error "Failed to download $file"
             rm -rf "$tmp_dir"
             exit 1
