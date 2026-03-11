@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pghost - shared configuration and helpers
 
-PGHOST_VERSION="1.0.0"
+PGHOST_VERSION="1.1.0"
 PGHOST_DIR="/opt/pghost"
 PGHOST_DATA="$PGHOST_DIR/data"
 PGHOST_CERTS="$PGHOST_DIR/certs"
