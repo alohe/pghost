@@ -4,11 +4,12 @@ Self-hosted PostgreSQL manager. Spin up databases like Neon, but on your own VPS
 
 ## Install
 
-```bash
-ssh root@your-vps
+SSH into your VPS and run:
 
+```bash
 # One-liner install
 curl -sSL https://raw.githubusercontent.com/alohe/pghost/main/install.sh | sudo bash
+```
 
 # Or clone and install
 git clone https://github.com/alohe/pghost.git
